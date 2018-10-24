@@ -1,0 +1,612 @@
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Properties;
+import java.util.Set;
+
+import javax.naming.Context;
+import javax.naming.InitialContext;
+import javax.naming.NamingException;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.sql.DataSource;
+
+import com.ibm.json.java.JSONArray;
+import com.ibm.json.java.JSONObject;
+
+@SuppressWarnings("unused")
+public class UpdateObjectTypeServlet extends HttpServlet {
+	private static final long serialVersionUID = 1L;
+	
+	//private final String DBschema = propfile.getProperty(ICNConstants.DATABASESCHEMA);
+
+	final String SYMBOLIC_NAME = "symbolicName";
+	final String DEPENDENT_VALUE = "dependentValue";
+	final String DEPENDENT_ON = "dependentOn";
+	final String HIDDEN = "hidden";
+	final String FUNCTION2 = "Function";
+	final String HAS_DEPENDENT_PROPERTIES = "hasDependentProperties";
+	final String VALUE = "value";
+	final String DISPLAY_NAME = "displayName";
+	final String VENDOR_NAME = "VendorName";
+	final String TENURE = "Tenure";
+	final String PROPERTY_ADDRESS = "PropertyAddress";
+	final String LICENSORS = "Licensors";
+	final String DOCUMENT_TYPE = "Document_Type";
+	final String ISSUE_DATE = "Issue_Date";
+	final String REGISTERED_AGREEMENT = "Registered Agreement";
+	final String LETTER_OF_INTENT = "Letter Of Intent";
+
+	protected void doPost(HttpServletRequest request, HttpServletResponse response)
+			throws ServletException, IOException {
+
+		System.out.println("Inside of post Method:::::::::::::");
+
+		String objectType = request.getPathInfo().substring(1);
+
+		InputStream requestInputStream = request.getInputStream();
+
+		JSONObject jsonRequest = JSONObject.parse(requestInputStream);
+		String requestMode = jsonRequest.get("requestMode").toString();
+		JSONArray getRequestProperties = (JSONArray) jsonRequest.get("properties");
+		JSONArray finalResponseProperties = new JSONArray();
+
+		JSONArray eds_JSONPropertyData = getPropertyData(objectType, request.getLocale(),getRequestProperties);
+
+		JSONObject clientContextObj = (JSONObject) jsonRequest.get("clientContext");
+		String userid = (String) clientContextObj.get("userid");
+		System.out.println("UserId:::::::::::::::::" + userid);
+		String locale = (String) clientContextObj.get("locale");
+		System.out.println("locale:::::::::::::::::" + locale);
+		String desktop = (String) clientContextObj.get("desktop");
+		System.out.println("desktop:::::::::::::::::" + desktop);
+		String action = (String) clientContextObj.get("action");
+		System.out.println("action:::::::::::::::::" + action);
+		
+		
+		if (requestMode.equals("initialNewObject")) {
+			System.out.println("initialNewObject :::::::::: " + eds_JSONPropertyData.size());
+			for (int i = 0; i < eds_JSONPropertyData.size(); i++) {
+				JSONObject overrideProperty = (JSONObject) eds_JSONPropertyData.get(i);
+				String overridePropertyName = overrideProperty.get("symbolicName").toString();
+				if (overrideProperty.containsKey("initialValue")) {
+					for (int j = 0; j < getRequestProperties.size(); j++) {
+						JSONObject requestProperty = (JSONObject) getRequestProperties.get(j);
+						String requestPropertyName = requestProperty.get("symbolicName").toString();
+						if (overridePropertyName.equals(requestPropertyName)) {
+							Object initialValue = overrideProperty.get("initialValue");
+							requestProperty.put("value", initialValue);
+						}
+					}
+				}
+			}
+		}
+
+		for (int i = 0; i < eds_JSONPropertyData.size(); i++) {
+			JSONObject overrideProperty = (JSONObject) eds_JSONPropertyData.get(i);
+
+			String overridePropertyName = overrideProperty.get("symbolicName").toString();
+			System.out.println("overridePropertyName ----> " + overridePropertyName);
+
+			if (requestMode.equals("initialNewObject") || requestMode.equals("initialExistingObject")
+					|| requestMode.equals("inProgressChanges")) {
+				if (overrideProperty.containsKey("dependentOn")) {
+
+					if (requestMode.equals("inProgressChanges")) {
+						String dependentOn = overrideProperty.get("dependentOn").toString();
+						String dependentValue = overrideProperty.get("dependentValue").toString();
+						for (int j = 0; j < getRequestProperties.size(); j++) {
+							JSONObject requestProperty = (JSONObject) getRequestProperties.get(j);
+
+							String requestPropertyName = requestProperty.get("symbolicName").toString();
+							Object value = requestProperty.get("value");
+							if (requestPropertyName.equals(dependentOn) && dependentValue.equals(value)) {
+								finalResponseProperties.add(overrideProperty);
+							}
+						}
+					}
+
+				} else {
+
+					if (!overrideProperty.containsKey("value")) {
+						for (int j = 0; j < getRequestProperties.size(); j++) {
+							JSONObject requestProperty = (JSONObject) getRequestProperties.get(j);
+							String requestPropertyName = requestProperty.get("symbolicName").toString();
+							if (requestPropertyName.equals(overridePropertyName)) {
+								Object value = requestProperty.get("value");
+								overrideProperty.put("value", value);
+							}
+						}
+					}
+					finalResponseProperties.add(overrideProperty);
+				}
+
+				if (requestMode.equals("finalNewObject") || requestMode.equals("finalExistingObject")) {
+					if (overrideProperty.containsKey("validateAs")) {
+
+						String validationType = overrideProperty.get("validateAs").toString();
+
+						if (validationType.equals("NoThrees")) {
+
+							String symbolicName = overrideProperty.get("symbolicName").toString();
+							for (int j = 0; j < getRequestProperties.size(); j++) {
+								JSONObject requestProperty = (JSONObject) getRequestProperties.get(j);
+								String requestPropertySymbolicName = requestProperty.get("symbolicName").toString();
+								if (requestPropertySymbolicName.contains("[")) {
+
+									requestPropertySymbolicName = requestPropertySymbolicName.substring(0,
+											requestPropertySymbolicName.indexOf("["));
+								}
+								if (symbolicName.equals(requestPropertySymbolicName)) {
+									String requestValue = requestProperty.get("value").toString();
+									String error = null;
+									if (requestValue.contains("3") || requestValue.toLowerCase().contains("three")
+											|| requestValue.toLowerCase().contains("third")) {
+										error = "This field cannot contain any threes";
+									}
+									if (error != null) {
+										JSONObject returnProperty = (JSONObject) overrideProperty.clone();
+										returnProperty.put("customValidationError", error);
+										returnProperty.put("symbolicName", requestProperty.get("symbolicName"));
+										finalResponseProperties.add(returnProperty);
+									}
+								}
+							}
+						}
+
+					} else if (overrideProperty.containsKey("timestamp")) {
+
+						for (int j = 0; j < getRequestProperties.size(); j++) {
+							JSONObject requestProperty = (JSONObject) getRequestProperties.get(j);
+							if (overrideProperty.get("symbolicName").equals(requestProperty.get("symbolicName"))) {
+								JSONObject returnProperty = new JSONObject();
+								returnProperty.put("symbolicName", requestProperty.get("symbolicName"));
+								returnProperty.put("value", (new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss"))
+										.format(new Date(System.currentTimeMillis())));
+								finalResponseProperties.add(returnProperty);
+							}
+						}
+					}
+				}
+			}
+		}
+		
+
+		if ("openSearchTemplate".equals(action)) {
+			for (int i = 0; i < finalResponseProperties.size(); i++) {
+				JSONObject actiontemp = (JSONObject) finalResponseProperties.get(i);
+				actiontemp.put("required", false);
+				
+			}
+		}
+		JSONObject jsonResponse = new JSONObject();
+		System.out.println(" FInal Properties " + finalResponseProperties);
+		jsonResponse.put("properties", finalResponseProperties);
+
+		PrintWriter writer = response.getWriter();
+		jsonResponse.serialize(writer);
+	}
+
+	private JSONArray getPropertyData(String objectType, Locale locale, JSONArray requestProperties) {
+
+		JSONArray properties = new JSONArray();
+		try {
+
+			Connection con = null;
+			JSONArray jsonproperties = new JSONArray();
+			System.out.println("getPropertyData :: Objecttype :: " + objectType);
+			System.out.println("getPropertyData :: Objecttype :::::: " + jsonproperties);
+			String uniqueCodeValue = "";
+			String docTypeValue = "";
+
+			Properties prop = new Properties();
+			InputStream input = null;
+			input = getClass().getResourceAsStream("/util.properties");
+
+			prop.load(input);
+			String schema = prop.getProperty("schema");
+			System.out.println("schema:::::::" + schema);
+			String edsTable = prop.getProperty("edsTable");
+			System.out.println("edsTable:::" + edsTable);
+			String edsDSN = prop.getProperty("DSNName");
+			System.out.println("edsDSN::::::" + edsDSN);
+			Context ctx = new InitialContext();
+			DataSource ds = (DataSource) ctx.lookup(edsDSN);
+			con = ds.getConnection();
+			Statement stmt = con.createStatement();
+
+			String strSql = "SELECT UNIQUE_CODE,STATE,ENTITY,REGION,CITY,PROPERTY_ADDRESS FROM " +  schema + ".UNIQUE_CODE";
+			System.out.println("getPropertyData :: String Query :: " + strSql);
+
+			ResultSet results = stmt.executeQuery(strSql);
+
+			List<UniqueCodeDTO> ucList;
+			ucList = new ArrayList<UniqueCodeDTO>();
+
+			while (results.next()) {
+				UniqueCodeDTO uc = new UniqueCodeDTO();
+				uc.setUniqueCode(results.getString("UNIQUE_CODE"));
+				uc.setState(results.getString("STATE"));
+				uc.setEntity(results.getString("ENTITY"));
+				uc.setRegion(results.getString("REGION"));
+				uc.setCity(results.getString("CITY"));
+				uc.setPropertyAdress(results.getString("PROPERTY_ADDRESS"));
+				ucList.add(uc);
+				System.out.println("  Database row " + uc);
+			}
+
+			System.out.println("results from the Database " + ucList);
+			JSONObject property = new JSONObject();
+			property.put("symbolicName", "UniqueCode");
+			property.put("displayName", "UniqueCode");
+			JSONObject choices = new JSONObject();
+			JSONArray choiceArr = new JSONArray();
+
+			for (Iterator<UniqueCodeDTO> iterator = ucList.iterator(); iterator.hasNext();) {
+				UniqueCodeDTO choicerow = iterator.next();
+				JSONObject choiceDN = new JSONObject();
+				choiceDN.put("displayName", choicerow.getUniqueCode());
+				choiceDN.put("value", choicerow.getUniqueCode());
+				choiceArr.add(choiceDN);
+			}
+			choices.put("displayName", "UniqueCode");
+			choices.put("choices", choiceArr);
+			property.put("choiceList", choices);
+			property.put("required", true);
+			property.put("hasDependentProperties", true);
+			properties.add(property);
+
+			JSONObject rgnProperty;
+			for (Iterator<UniqueCodeDTO> iterator = ucList.iterator(); iterator.hasNext();) {
+				UniqueCodeDTO choiceRow = iterator.next();
+				rgnProperty = new JSONObject();
+				rgnProperty.put("symbolicName", "Region_ED");
+				rgnProperty.put("dependentOn", "UniqueCode"); 
+				rgnProperty.put("required", true);
+				rgnProperty.put("dependentValue", choiceRow.getUniqueCode());
+				rgnProperty.put("value", choiceRow.getRegion());
+
+				properties.add(rgnProperty);
+			}
+
+			JSONObject entityProperty;
+			for (Iterator<UniqueCodeDTO> iterator = ucList.iterator(); iterator.hasNext();) {
+				UniqueCodeDTO choiceRow = iterator.next();
+				entityProperty = new JSONObject();
+				entityProperty.put("symbolicName", "Entity");
+				entityProperty.put("dependentOn", "UniqueCode");
+				entityProperty.put("required", true);
+				entityProperty.put("dependentValue", choiceRow.getUniqueCode());
+				entityProperty.put("value", choiceRow.getEntity());
+
+				properties.add(entityProperty);
+			}
+
+			JSONObject stateProperty;
+			for (Iterator<UniqueCodeDTO> iterator = ucList.iterator(); iterator.hasNext();) {
+				UniqueCodeDTO choiceRow = iterator.next();
+				stateProperty = new JSONObject();
+				stateProperty.put("symbolicName", "State");
+				stateProperty.put("dependentOn", "UniqueCode");
+				stateProperty.put("required", true);
+				stateProperty.put("dependentValue", choiceRow.getUniqueCode());
+				stateProperty.put("value", choiceRow.getState());
+
+				properties.add(stateProperty);
+			}
+
+			JSONObject adressProperty;
+			for (Iterator<UniqueCodeDTO> iterator = ucList.iterator(); iterator.hasNext();) {
+				UniqueCodeDTO choiceRow = iterator.next();
+				adressProperty = new JSONObject();
+				adressProperty.put("symbolicName", "PropertyAddress");
+				adressProperty.put("dependentOn", "UniqueCode");
+				adressProperty.put("required", true);
+				adressProperty.put("dependentValue", choiceRow.getUniqueCode());
+				adressProperty.put("value", choiceRow.getPropertyAdress());
+				properties.add(adressProperty);
+			}
+
+			/*JSONObject	city = new JSONObject();
+			city.put("symbolicName", "City");
+			city.put("required", true);
+			properties.add(city);*/
+			
+			JSONObject	city;
+			for (Iterator<UniqueCodeDTO> iterator = ucList.iterator(); iterator.hasNext();) {
+				UniqueCodeDTO choiceRow = iterator.next();
+				city = new JSONObject();
+				city.put("symbolicName", "City");
+				city.put("dependentOn", "UniqueCode");
+				city.put("required", true);
+				city.put("dependentValue", choiceRow.getUniqueCode());
+				city.put("value", choiceRow.getCity());
+				properties.add(city);
+			}
+			
+			String  strDoctype="";
+			for (int j = 0; j < requestProperties.size(); j++) {					// To retrieve existing Property Value
+				JSONObject requestProperty = (JSONObject)requestProperties.get(j);
+				
+				String symbolicName = requestProperty.get("symbolicName").toString();
+				if ("Document_Type".equalsIgnoreCase(symbolicName)){
+					strDoctype = String.valueOf(requestProperty.get("value"));
+				}
+			}
+			
+			JSONObject	docTitle;
+			for (Iterator<UniqueCodeDTO> iterator = ucList.iterator(); iterator.hasNext();) {
+				UniqueCodeDTO choiceRow = iterator.next();
+				docTitle = new JSONObject();
+				docTitle.put("symbolicName", "DocumentTitle");
+				docTitle.put("dependentOn", "UniqueCode");
+				docTitle.put("required", true);
+				docTitle.put("readOnly", true);
+				docTitle.put("editable", false);
+				docTitle.put("dependentValue", choiceRow.getUniqueCode());
+				docTitle.put("value", choiceRow.getUniqueCode()+ "_" + strDoctype );
+				
+				properties.add(docTitle);
+			}
+			
+			
+			
+			
+
+			JSONObject	docTitleOnLoad = new JSONObject();
+			docTitleOnLoad.put("symbolicName", "DocumentTitle");
+			docTitleOnLoad.put("readOnly", true);
+			docTitleOnLoad.put("required", true);
+			properties.add(docTitleOnLoad);
+			
+			
+			
+			JSONObject	primaryUser = new JSONObject();
+			primaryUser.put("symbolicName", "PrimaryUser");
+			primaryUser.put("required", true);
+			properties.add(primaryUser);
+			
+			
+			// Vendor details
+
+			String vendorSql = "SELECT VENDOR_NAME FROM " + schema +".VENDOR_DETAILS";
+			System.out.println("getPropertyData :: String Query ::::::: " + vendorSql);
+			ResultSet vResults = stmt.executeQuery(vendorSql);
+			List<VendorDTO> vList;
+			vList = new ArrayList<VendorDTO>();
+
+			while (vResults.next()) {
+				VendorDTO vn = new VendorDTO();
+				vn.setVendorName(vResults.getString("VENDOR_NAME"));
+				vList.add(vn);
+				System.out.println(" Database row " + vn);
+			}
+
+			JSONObject vProperty = new JSONObject();
+			vProperty.put("symbolicName", "VendorName");
+			vProperty.put("displayName", "Vendor Name");
+			
+			JSONObject vChoices = new JSONObject();
+			JSONArray vChoiceArr = new JSONArray();
+
+			for (Iterator<VendorDTO> iterator = vList.iterator(); iterator.hasNext();) {
+				VendorDTO choicerow = iterator.next();
+				JSONObject choiceDN = new JSONObject();
+				choiceDN.put("displayName", choicerow.getVendorName());
+				choiceDN.put("value", choicerow.getVendorName());
+				vChoiceArr.add(choiceDN);
+			}
+			vChoices.put("displayName", "VendorName");
+			vChoices.put("choices", vChoiceArr);
+			vProperty.put("choiceList", vChoices);
+			vProperty.put("required", true);
+			vProperty.put("hasDependentProperties", false);
+			properties.add(vProperty);
+
+			// FunctionDocType
+			String functionSql = "select function, document_type, field_Status  from " + schema+ ".function_Doctype";
+			System.out.println("getPropertyData :: String Query ::::::: " + functionSql);
+			ResultSet funResults = stmt.executeQuery(functionSql);
+			List<DocFunctionDTO> fList = new ArrayList<DocFunctionDTO>();
+			List<String> functionList = new ArrayList<String>();
+
+			while (funResults.next()) {
+				DocFunctionDTO fn = new DocFunctionDTO();
+				fn.setFunctionName(funResults.getString("function"));
+				functionList.add(funResults.getString("function"));
+				fn.setVendorVisible(funResults.getString(3).equalsIgnoreCase("NO")?false :true);
+				fn.setDocType(funResults.getString("document_type"));
+				fList.add(fn);
+				System.out.println(" Database row " + fn);
+
+			}
+
+			for (Iterator iterator = fList.iterator(); iterator.hasNext();) {
+				DocFunctionDTO docFunctionDTO = (DocFunctionDTO) iterator.next();
+				if (LETTER_OF_INTENT.equalsIgnoreCase(docFunctionDTO.getDocType())
+						|| REGISTERED_AGREEMENT.equalsIgnoreCase(docFunctionDTO.getDocType())) {
+
+					showDependentvalues(properties, ISSUE_DATE, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					showDependentvalues(properties, LICENSORS, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					showDependentvalues(properties, PROPERTY_ADDRESS, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					hideProperties(properties, VENDOR_NAME, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					if (LETTER_OF_INTENT.equalsIgnoreCase(docFunctionDTO.getDocType())) {
+						hideProperties(properties, TENURE, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					}
+
+					if (REGISTERED_AGREEMENT.equalsIgnoreCase(docFunctionDTO.getDocType())) {
+						showDependentvalues(properties, TENURE, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					}
+				} else {
+					hideProperties(properties, ISSUE_DATE, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					hideProperties(properties, LICENSORS, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					hideProperties(properties, PROPERTY_ADDRESS, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+
+					if (docFunctionDTO.isVendorVisible) {
+						showDependentvalues(properties, VENDOR_NAME, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					} else {
+						hideProperties(properties, VENDOR_NAME, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					}
+
+					if (!REGISTERED_AGREEMENT.equalsIgnoreCase(docFunctionDTO.getDocType())) {
+						hideProperties(properties, TENURE, DOCUMENT_TYPE, docFunctionDTO.getDocType());
+					}
+				}
+			}
+			// Function
+			JSONObject fProperty = new JSONObject();
+			fProperty.put("symbolicName", "Function");
+			fProperty.put("displayName", "Function");
+			JSONObject fChoices = new JSONObject();
+			JSONArray fChoiceArr = new JSONArray();
+			Set<String> functionSet = new HashSet<String>(functionList);
+
+			for (Iterator<String> iterator = functionSet.iterator(); iterator.hasNext();) {
+				String choicerow = iterator.next();
+				JSONObject choiceDN = new JSONObject();
+				choiceDN.put("displayName", choicerow);
+				choiceDN.put("value", choicerow);
+				fChoiceArr.add(choiceDN);
+			}
+			fChoices.put("displayName", "Function");
+			fChoices.put("choices", fChoiceArr);
+			fProperty.put("choiceList", fChoices);
+			fProperty.put("required", true);
+			fProperty.put("hasDependentProperties", false);
+			properties.add(fProperty);
+
+			// Doc Type
+
+			JSONObject docProperty = new JSONObject();
+			docProperty.put("symbolicName", "Document_Type");
+			docProperty.put("displayName", "DocumentType");
+			JSONObject docChoices = new JSONObject();
+			JSONArray docChoiceArr = new JSONArray();
+
+			for (Iterator<DocFunctionDTO> iterator = fList.iterator(); iterator.hasNext();) {
+				DocFunctionDTO choicerow = iterator.next();
+				JSONObject choiceDN = new JSONObject();
+				choiceDN.put("displayName", choicerow.getDocType());
+				choiceDN.put("value", choicerow.getDocType());
+				docChoiceArr.add(choiceDN);
+			}
+			docChoices.put("displayName", "DocumentType");
+			docChoices.put("choices", docChoiceArr);
+			docProperty.put("choiceList", docChoices);
+			docProperty.put("required", true);
+			docProperty.put("hasDependentProperties", true);
+			properties.add(docProperty);
+			
+			
+			
+			String  strUniqueCodeVal="";
+			for (int j = 0; j < requestProperties.size(); j++) {					// To retrieve existing Property Value
+				JSONObject requestProperty = (JSONObject)requestProperties.get(j);
+				
+				String symbolicName = requestProperty.get("symbolicName").toString();
+				if ("UniqueCode".equalsIgnoreCase(symbolicName)){
+					strUniqueCodeVal = String.valueOf(requestProperty.get("value"));
+				}
+			}
+			
+			JSONObject	docTitleDepnedsODdoctype;
+			for (Iterator<DocFunctionDTO> iterator = fList.iterator(); iterator.hasNext();) {
+				DocFunctionDTO choiceRow = iterator.next();
+				docTitleDepnedsODdoctype = new JSONObject();
+				docTitleDepnedsODdoctype.put("symbolicName", "DocumentTitle");
+				docTitleDepnedsODdoctype.put("dependentOn", "Document_Type");
+				docTitleDepnedsODdoctype.put("required", true);
+				docTitleDepnedsODdoctype.put("readOnly", true);
+				//docTitleDepnedsODdoctype.put("editable", false);
+				docTitleDepnedsODdoctype.put("dependentValue",   choiceRow.getDocType() );
+				docTitleDepnedsODdoctype.put("value", strUniqueCodeVal+ "_"+ choiceRow.getDocType() );
+				
+				properties.add(docTitleDepnedsODdoctype);
+			}
+			
+
+			List<FunctionDTO> ftestList;
+			ftestList = new ArrayList<FunctionDTO>();
+			while (funResults.next()) {
+				FunctionDTO fn = new FunctionDTO();
+				fn.setDocument_type(funResults.getString("document_type"));
+				ftestList.add(fn);
+			}
+			
+			
+			
+			System.out.println(" REturning " + properties);
+			stmt.close();
+			con.close();
+		}
+
+		catch (SQLException se) {
+			System.out.println("SQL Exception:");
+			while (se != null) {
+				System.out.println("State : " + se.getSQLState());
+				System.out.println("Message: " + se.getMessage());
+				System.out.println("Error : " + se.getErrorCode());
+				se = se.getNextException();
+			}
+		}
+
+		catch (NamingException e) {
+			e.printStackTrace();
+
+		} catch (IOException e) {
+			e.printStackTrace();
+
+		} finally {
+		}
+		return properties;
+
+	}
+
+	private void showDependentvalues(JSONArray properties, String symbolicName, String dependentOn,
+			String dependentValue) {
+		System.out.println("inside of show method");
+		JSONObject entityProperty;
+		JSONObject showProperty;
+		entityProperty = new JSONObject();
+		entityProperty.put(SYMBOLIC_NAME, symbolicName);
+		entityProperty.put(DEPENDENT_ON, dependentOn);
+		entityProperty.put(DEPENDENT_VALUE, dependentValue);
+		entityProperty.put(HIDDEN, false);
+		entityProperty.put("required", true);
+		properties.add(entityProperty);
+	}
+
+	private void hideProperties(JSONArray properties, String symbolicName, String dependentOn, String dependentValue) {
+
+		JSONObject property;
+		property = new JSONObject();
+		property.put(SYMBOLIC_NAME, symbolicName);
+		property.put(HIDDEN, true);
+		property.put(DEPENDENT_ON, dependentOn);
+		property.put(DEPENDENT_VALUE, dependentValue);
+
+		properties.add(property);
+
+	}
+}
+
+/*
+ * InputStream objectTypesStream =
+ * getClass().getResourceAsStream("result.json");
+ * System.out.println("objectTypesStream" + objectTypesStream); jsonproperties =
+ * JSONArray.parse(objectTypesStream); System.out.println( "REturning JSAON 11"
+ * + jsonproperties);
+ */
